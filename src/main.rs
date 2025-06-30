@@ -117,7 +117,7 @@ async fn main() {
         .route("/keypair", post(generate_keypair))
         .route("/token/create", post(create_token));
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     println!("Listening on {}", addr);
     
     let listener = TcpListener::bind(addr).await.unwrap();
