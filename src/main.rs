@@ -17,6 +17,7 @@ use std::str::FromStr;
 use tokio::net::TcpListener;
 use bs58;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use ed25519_dalek::{SecretKey, PublicKey, Keypair as Ed25519Keypair, Signer as Ed25519Signer};
 
 async fn generate_keypair() -> Json<serde_json::Value> {
     let keypair = Keypair::new();
@@ -53,6 +54,12 @@ struct SendTokenRequest {
     mint: String,
     owner: String,
     amount: u64,
+}
+
+#[derive(Deserialize)]
+struct SignMessageRequest {
+    message: String,
+    secret: String,
 }
 
 async fn create_token(
@@ -203,6 +210,72 @@ async fn create_send_token(
     )
 }
 
+async fn sign_message(
+    Json(req): Json<SignMessageRequest>
+) -> impl IntoResponse {
+    // Check for missing fields
+    if req.message.is_empty() || req.secret.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": "Missing required fields"
+            }))
+        );
+    }
+
+    // Convert base58 secret to bytes
+    let secret_bytes = match bs58::decode(&req.secret).into_vec() {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": "Invalid base58 secret key"
+                }))
+            );
+        }
+    };
+    
+    // Create signing key from secret
+    let secret_key = match SecretKey::from_bytes(&secret_bytes) {
+        Ok(key) => key,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "success": false,
+                    "error": "Invalid secret key"
+                }))
+            );
+        }
+    };
+    
+    let public_key = PublicKey::from(&secret_key);
+    
+    // Create keypair for signing
+    let keypair = Ed25519Keypair {
+        secret: secret_key,
+        public: public_key,
+    };
+    
+    // Sign the message
+    let signature = keypair.sign(req.message.as_bytes());
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "data": {
+                "signature": BASE64.encode(signature.to_bytes()),
+                "public_key": bs58::encode(public_key.to_bytes()).into_string(), // Call into_string() to convert the EncodeBuilder to a String
+                "message": req.message
+            }
+        }))
+    )
+}
+
 #[tokio::main]
 async fn main() {
     let app = Router::new()
@@ -213,7 +286,9 @@ async fn main() {
         .route("/send/sol", post(create_send_sol))
         .route("//send/sol", post(create_send_sol))
         .route("/send/token", post(create_send_token))
-        .route("//send/token", post(create_send_token));
+        .route("//send/token", post(create_send_token))
+        .route("/message/sign", post(sign_message))
+        .route("//message/sign", post(sign_message));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     println!("Listening on {}", addr);
