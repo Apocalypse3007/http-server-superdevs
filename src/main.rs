@@ -19,19 +19,7 @@ use bs58;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{SecretKey, PublicKey, Keypair as Ed25519Keypair, Signer as Ed25519Signer};
 
-async fn generate_keypair() -> Json<serde_json::Value> {
-    let keypair = Keypair::new();
-    let pubkey = keypair.pubkey().to_string();
-    let secret = bs58::encode(keypair.to_bytes()).into_string();
 
-    Json(json!({
-        "success": true,
-        "data": {
-            "pubkey": pubkey,
-            "secret": secret
-        }
-    }))
-}
 
 #[derive(Deserialize)]
 struct CreateTokenRequest {
@@ -62,7 +50,23 @@ struct SignMessageRequest {
     secret: String,
 }
 
-async fn create_token(
+
+
+async fn generate_new_keypair() -> Json<serde_json::Value> {
+    let keypair = Keypair::new();
+    let pubkey = keypair.pubkey().to_string();
+    let secret = bs58::encode(keypair.to_bytes()).into_string();
+
+    Json(json!({
+        "success": true,
+        "data": {
+            "pubkey": pubkey,
+            "secret": secret
+        }
+    }))
+}
+
+async fn initialize_token_mint(
     Json(req): Json<CreateTokenRequest>
 ) -> impl IntoResponse {
     let mint_authority = match Pubkey::from_str(&req.mint_authority) {
@@ -131,39 +135,7 @@ async fn create_token(
     )
 }
 
-async fn create_send_sol(
-    Json(req): Json<SendSolRequest>
-) -> impl IntoResponse {
-    let from = Pubkey::from_str(&req.from).unwrap_or_else(|_| {
-        Pubkey::default()
-    });
-
-    let to = Pubkey::from_str(&req.to).unwrap_or_else(|_| {
-        Pubkey::default()
-    });
-        
-    let ix = system_instruction::transfer(&from, &to, req.lamports);
-
-    let accounts: Vec<_> = ix.accounts.iter().map(|meta| {
-        meta.pubkey.to_string()
-    }).collect();
-
-    let instruction_data = BASE64.encode(&ix.data);
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "success": true,
-            "data": {
-                "program_id": ix.program_id.to_string(),
-                "accounts": accounts,
-                "instruction_data": instruction_data
-            }
-        }))
-    )
-}
-
-async fn create_send_token(
+async fn transfer_spl_tokens(
     Json(req): Json<SendTokenRequest>
 ) -> impl IntoResponse {
     let destination = Pubkey::from_str(&req.destination).unwrap_or_else(|_| Pubkey::default());
@@ -210,10 +182,43 @@ async fn create_send_token(
     )
 }
 
-async fn sign_message(
-    Json(req): Json<SignMessageRequest>
+
+async fn transfer_sol(
+    Json(req): Json<SendSolRequest>
 ) -> impl IntoResponse {
-    // Check for missing fields
+    let from = Pubkey::from_str(&req.from).unwrap_or_else(|_| {
+        Pubkey::default()
+    });
+
+    let to = Pubkey::from_str(&req.to).unwrap_or_else(|_| {
+        Pubkey::default()
+    });
+        
+    let ix = system_instruction::transfer(&from, &to, req.lamports);
+
+    let accounts: Vec<_> = ix.accounts.iter().map(|meta| {
+        meta.pubkey.to_string()
+    }).collect();
+
+    let instruction_data = BASE64.encode(&ix.data);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "data": {
+                "program_id": ix.program_id.to_string(),
+                "accounts": accounts,
+                "instruction_data": instruction_data
+            }
+        }))
+    )
+}
+
+
+async fn sign_message_with_ed25519(
+    Json(req): Json<SignMessageRequest>
+) -> impl IntoResponse {        
     if req.message.is_empty() || req.secret.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -224,7 +229,6 @@ async fn sign_message(
         );
     }
 
-    // Convert base58 secret to bytes
     let secret_bytes = match bs58::decode(&req.secret).into_vec() {
         Ok(bytes) => bytes,
         Err(_) => {
@@ -238,7 +242,6 @@ async fn sign_message(
         }
     };
     
-    // Create signing key from secret
     let secret_key = match SecretKey::from_bytes(&secret_bytes) {
         Ok(key) => key,
         Err(_) => {
@@ -254,13 +257,11 @@ async fn sign_message(
     
     let public_key = PublicKey::from(&secret_key);
     
-    // Create keypair for signing
     let keypair = Ed25519Keypair {
         secret: secret_key,
         public: public_key,
     };
     
-    // Sign the message
     let signature = keypair.sign(req.message.as_bytes());
 
     (
@@ -269,26 +270,27 @@ async fn sign_message(
             "success": true,
             "data": {
                 "signature": BASE64.encode(signature.to_bytes()),
-                "public_key": bs58::encode(public_key.to_bytes()).into_string(), // Call into_string() to convert the EncodeBuilder to a String
+                "public_key": bs58::encode(public_key.to_bytes()).into_string(),
                 "message": req.message
             }
         }))
     )
 }
 
+
 #[tokio::main]
 async fn main() {
     let app = Router::new()
-        .route("/keypair", post(generate_keypair))
-        .route("//keypair", post(generate_keypair))
-        .route("/token/create", post(create_token))
-        .route("//token/create", post(create_token))
-        .route("/send/sol", post(create_send_sol))
-        .route("//send/sol", post(create_send_sol))
-        .route("/send/token", post(create_send_token))
-        .route("//send/token", post(create_send_token))
-        .route("/message/sign", post(sign_message))
-        .route("//message/sign", post(sign_message));
+        .route("/keypair", post(generate_new_keypair))
+        .route("//keypair", post(generate_new_keypair))
+        .route("/token/create", post(initialize_token_mint))
+        .route("//token/create", post(initialize_token_mint))
+        .route("/send/sol", post(transfer_sol))
+        .route("//send/sol", post(transfer_sol))
+        .route("/send/token", post(transfer_spl_tokens))
+        .route("//send/token", post(transfer_spl_tokens))
+        .route("/message/sign", post(sign_message_with_ed25519))
+        .route("//message/sign", post(sign_message_with_ed25519));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     println!("Listening on {}", addr);
