@@ -119,31 +119,13 @@ async fn create_token(
 async fn create_send_sol(
     Json(req): Json<SendSolRequest>
 ) -> impl IntoResponse {
-    let from = match Pubkey::from_str(&req.from) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "success": false,
-                    "error": format!("Invalid from address: {}", e)
-                }))
-            )
-        }
-    };
+    let from = Pubkey::from_str(&req.from).unwrap_or_else(|_| {
+        Pubkey::default()
+    });
 
-    let to = match Pubkey::from_str(&req.to) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "success": false,
-                    "error": format!("Invalid to address: {}", e)
-                }))
-            )
-        }
-    };
+    let to = Pubkey::from_str(&req.to).unwrap_or_else(|_| {
+        Pubkey::default()
+    });
         
     let ix = system_instruction::transfer(&from, &to, req.lamports);
 
