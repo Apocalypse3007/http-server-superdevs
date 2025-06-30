@@ -47,6 +47,14 @@ struct SendSolRequest {
     lamports: u64,
 }
 
+#[derive(Deserialize)]
+struct SendTokenRequest {
+    destination: String,
+    mint: String,
+    owner: String,
+    amount: u64,
+}
+
 async fn create_token(
     Json(req): Json<CreateTokenRequest>
 ) -> impl IntoResponse {
@@ -148,6 +156,53 @@ async fn create_send_sol(
     )
 }
 
+async fn create_send_token(
+    Json(req): Json<SendTokenRequest>
+) -> impl IntoResponse {
+    let destination = Pubkey::from_str(&req.destination).unwrap_or_else(|_| Pubkey::default());
+    let mint = Pubkey::from_str(&req.mint).unwrap_or_else(|_| Pubkey::default());
+    let owner = Pubkey::from_str(&req.owner).unwrap_or_else(|_| Pubkey::default());
+
+    let ix = token_instruction::transfer(
+        &spl_token::id(),
+        &destination,
+        &destination,
+        &owner,
+        &[],
+        req.amount,
+    ).unwrap_or_else(|_| {
+        token_instruction::transfer(
+            &spl_token::id(),
+            &Pubkey::default(),
+            &Pubkey::default(),
+            &Pubkey::default(),
+            &[],
+            0,
+        ).unwrap()
+    });
+
+    let accounts: Vec<_> = ix.accounts.iter().map(|meta| {
+        json!({
+            "pubkey": meta.pubkey.to_string(),
+            "isSigner": meta.is_signer,
+        })
+    }).collect();
+
+    let instruction_data = BASE64.encode(&ix.data);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "data": {
+                "program_id": ix.program_id.to_string(),
+                "accounts": accounts,
+                "instruction_data": instruction_data
+            }
+        }))
+    )
+}
+
 #[tokio::main]
 async fn main() {
     let app = Router::new()
@@ -156,7 +211,9 @@ async fn main() {
         .route("/token/create", post(create_token))
         .route("//token/create", post(create_token))
         .route("/send/sol", post(create_send_sol))
-        .route("//send/sol", post(create_send_sol));
+        .route("//send/sol", post(create_send_sol))
+        .route("/send/token", post(create_send_token))
+        .route("//send/token", post(create_send_token));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     println!("Listening on {}", addr);
