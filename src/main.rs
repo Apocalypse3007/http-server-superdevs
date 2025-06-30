@@ -33,7 +33,7 @@ async fn generate_keypair() -> Json<serde_json::Value> {
 
 #[derive(Deserialize)]
 struct CreateTokenRequest {
-    mint_authority: String,
+    mintAuthority: String,
     mint: String,
     decimals: u8,
 }
@@ -41,51 +41,18 @@ struct CreateTokenRequest {
 async fn create_token(
     Json(req): Json<CreateTokenRequest>
 ) -> impl IntoResponse {
-    // parse the two pubkeys, return 400 if invalid
-    let mint_authority = match Pubkey::from_str(&req.mint_authority) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "success": false,
-                    "error": format!("Invalid mint_authority: {}", e)
-                }))
-            )
-        }
-    };
-    let mint = match Pubkey::from_str(&req.mint) {
-        Ok(pk) => pk,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "success": false,
-                    "error": format!("Invalid mint: {}", e)
-                }))
-            )
-        }
-    };
+    // parse the two pubkeys
+    let mint_authority = Pubkey::from_str(&req.mintAuthority).unwrap();
+    let mint = Pubkey::from_str(&req.mint).unwrap();
 
     // build the initialize_mint instruction
-    let ix = match token_instruction::initialize_mint(
+    let ix = token_instruction::initialize_mint(
         &spl_token::id(),
         &mint,
         &mint_authority,
         Some(&mint_authority),
         req.decimals,
-    ) {
-        Ok(ix) => ix,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "success": false,
-                    "error": format!("Failed to build instruction: {}", e)
-                }))
-            )
-        }
-    };
+    ).unwrap();
 
     // map account metas into JSON
     let accounts: Vec<_> = ix.accounts.iter().map(|meta| {
@@ -98,17 +65,14 @@ async fn create_token(
 
     let instruction_data = BASE64.encode(&ix.data);
 
-    (
-        StatusCode::OK,
-        Json(json!({
-            "success": true,
-            "data": {
-                "program_id": ix.program_id.to_string(),
-                "accounts": accounts,
-                "instruction_data": instruction_data
-            }
-        }))
-    )
+    Json(json!({
+        "success": true,
+        "data": {
+            "program_id": ix.program_id.to_string(),
+            "accounts": accounts,
+            "instruction_data": instruction_data
+        }
+    }))
 }
 
 #[tokio::main]
